@@ -18,6 +18,8 @@ const productsController = {
         page = 1,
         limit = 24,
         lang = 'en',
+        minPrice,
+        maxPrice,
       } = req.query;
 
       // Reduced cache TTL for products list to show new products faster
@@ -79,19 +81,51 @@ const productsController = {
         }
       }
 
-      const [products, total] = await Promise.all([
-        Product.find(query)
-          .populate('brandId', 'slug')
-          .populate({
-            path: 'brandId',
-            select: 'slug translations',
-          })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .sort({ [sort]: -1 })
-          .lean(),
-        Product.countDocuments(query),
-      ]);
+      // Get all products first
+      let products = await Product.find(query)
+        .populate('brandId', 'slug')
+        .populate({
+          path: 'brandId',
+          select: 'slug translations',
+        })
+        .lean();
+
+      // Filter by price if provided
+      if (minPrice || maxPrice) {
+        const minPriceNum = minPrice ? parseFloat(minPrice) : 0;
+        const maxPriceNum = maxPrice ? parseFloat(maxPrice) : Infinity;
+        
+        products = products.filter((product) => {
+          const publishedVariants = product.variants?.filter((v) => v.published) || [];
+          if (publishedVariants.length === 0) return false;
+          
+          const minProductPrice = Math.min(...publishedVariants.map((v) => v.price));
+          return minProductPrice >= minPriceNum && minProductPrice <= maxPriceNum;
+        });
+      }
+
+      // Sort products
+      if (sort === 'price') {
+        products.sort((a, b) => {
+          const aVariants = a.variants?.filter((v) => v.published) || [];
+          const bVariants = b.variants?.filter((v) => v.published) || [];
+          const aMinPrice = aVariants.length > 0 ? Math.min(...aVariants.map((v) => v.price)) : Infinity;
+          const bMinPrice = bVariants.length > 0 ? Math.min(...bVariants.map((v) => v.price)) : Infinity;
+          return bMinPrice - aMinPrice; // Descending
+        });
+      } else {
+        products.sort((a, b) => {
+          const aValue = a[sort] || 0;
+          const bValue = b[sort] || 0;
+          return new Date(bValue) - new Date(aValue); // Descending
+        });
+      }
+
+      // Get total before pagination
+      const total = products.length;
+
+      // Apply pagination
+      products = products.slice(skip, skip + parseInt(limit));
 
       const response = {
         data: products.map((product) => {
@@ -131,6 +165,66 @@ const productsController = {
       await safeRedis.setex(cacheKey, 60, JSON.stringify(response));
 
       res.json(response);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get price range for products
+   * GET /api/v1/products/price-range?category=&lang=
+   */
+  async getPriceRange(req, res, next) {
+    try {
+      const { category, lang = 'en' } = req.query;
+
+      const query = {
+        published: true,
+        deletedAt: null,
+      };
+
+      // Add category filter if provided
+      if (category) {
+        const categoryDoc = await Category.findOne({
+          'translations.slug': category,
+          'translations.locale': lang,
+          published: true,
+          deletedAt: null,
+        });
+
+        if (categoryDoc) {
+          query.$or = [
+            { primaryCategoryId: categoryDoc._id },
+            { categoryIds: categoryDoc._id },
+          ];
+        }
+      }
+
+      const products = await Product.find(query).lean();
+
+      // Calculate min and max prices from all published variants
+      let minPrice = Infinity;
+      let maxPrice = 0;
+
+      products.forEach((product) => {
+        const publishedVariants = product.variants?.filter((v) => v.published) || [];
+        if (publishedVariants.length > 0) {
+          const productMinPrice = Math.min(...publishedVariants.map((v) => v.price));
+          const productMaxPrice = Math.max(...publishedVariants.map((v) => v.price));
+          
+          if (productMinPrice < minPrice) minPrice = productMinPrice;
+          if (productMaxPrice > maxPrice) maxPrice = productMaxPrice;
+        }
+      });
+
+      // Round to nice numbers
+      minPrice = minPrice === Infinity ? 0 : Math.floor(minPrice / 1000) * 1000;
+      maxPrice = maxPrice === 0 ? 100000 : Math.ceil(maxPrice / 1000) * 1000;
+
+      res.json({
+        min: minPrice,
+        max: maxPrice,
+      });
     } catch (error) {
       next(error);
     }

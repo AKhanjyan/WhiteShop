@@ -5,6 +5,9 @@ const productsController = require('../controllers/productsController');
 // GET /api/v1/products - List products
 router.get('/', productsController.findAll);
 
+// GET /api/v1/products/price-range - Get price range
+router.get('/price-range', productsController.getPriceRange);
+
 // GET /api/v1/products/:slug - Get product by slug
 router.get('/:slug', productsController.findBySlug);
 
