@@ -8,6 +8,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { connectDB } = require('./lib/mongodb');
+const { checkAndFreePort } = require('./utils/portChecker');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -98,14 +99,42 @@ process.on('SIGTERM', async () => {
 // Start server
 const startServer = async () => {
   try {
+    // Проверяем и освобождаем порт перед запуском (только в режиме разработки)
+    if (process.env.NODE_ENV !== 'production') {
+      const portFreed = await checkAndFreePort(PORT, true);
+      if (!portFreed) {
+        console.error(`\n❌ Не удалось освободить порт ${PORT}`);
+        console.error(`\n💡 Решение:`);
+        console.error(`   1. Найдите процесс вручную: netstat -ano | findstr :${PORT}`);
+        console.error(`   2. Остановите процесс: taskkill /PID <PID> /F`);
+        console.error(`   3. Или измените порт в .env файле: PORT=3002\n`);
+        process.exit(1);
+      }
+    }
+
     // Connect to MongoDB
     await connectDB();
     
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`🚀 API Server running on http://localhost:${PORT}`);
     });
+
+    // Обработка ошибок при запуске сервера
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.error(`\n❌ Ошибка: Порт ${PORT} уже занят!`);
+        console.error(`\n💡 Решение:`);
+        console.error(`   1. Найдите процесс, использующий порт: netstat -ano | findstr :${PORT}`);
+        console.error(`   2. Остановите процесс: taskkill /PID <PID> /F`);
+        console.error(`   3. Или измените порт в .env файле: PORT=3002\n`);
+        process.exit(1);
+      } else {
+        console.error('❌ Ошибка при запуске сервера:', error);
+        process.exit(1);
+      }
+    });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 };

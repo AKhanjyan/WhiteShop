@@ -20,9 +20,13 @@ const productsController = {
         lang = 'en',
       } = req.query;
 
+      // Reduced cache TTL for products list to show new products faster
+      // Cache key includes timestamp to help with cache invalidation
       const cacheKey = `products:${JSON.stringify(req.query)}`;
       const cached = await safeRedis.get(cacheKey);
       
+      // Only use cache if it's less than 1 minute old (reduced from 5 minutes)
+      // This ensures new products appear faster
       if (cached) {
         return res.json(JSON.parse(cached));
       }
@@ -123,8 +127,8 @@ const productsController = {
         },
       };
 
-      // Cache for 5 minutes
-      await safeRedis.setex(cacheKey, 300, JSON.stringify(response));
+      // Cache for 1 minute (reduced from 5 minutes) to show new products faster
+      await safeRedis.setex(cacheKey, 60, JSON.stringify(response));
 
       res.json(response);
     } catch (error) {

@@ -107,13 +107,13 @@ const productSchema = new mongoose.Schema({
 });
 
 // Indexes
+// variants.sku уже имеет unique: true в схеме, что автоматически создает индекс
 productSchema.index({ brandId: 1 });
 productSchema.index({ published: 1, publishedAt: 1 });
 productSchema.index({ featured: 1 });
 productSchema.index({ categoryIds: 1 });
 productSchema.index({ deletedAt: 1 });
 productSchema.index({ 'translations.slug': 1, 'translations.locale': 1 });
-productSchema.index({ 'variants.sku': 1 });
 
 module.exports = mongoose.model('Product', productSchema);
 

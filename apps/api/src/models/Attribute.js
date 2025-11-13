@@ -59,7 +59,7 @@ const attributeSchema = new mongoose.Schema({
 });
 
 // Indexes
-attributeSchema.index({ key: 1 });
+// key уже имеет unique: true в схеме, что автоматически создает индекс
 
 module.exports = mongoose.model('Attribute', attributeSchema);
 

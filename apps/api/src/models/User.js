@@ -65,8 +65,7 @@ const userSchema = new mongoose.Schema({
 });
 
 // Indexes
-userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
+// email и phone уже имеют unique: true в схеме, что автоматически создает индексы
 userSchema.index({ deletedAt: 1 });
 
 // Methods

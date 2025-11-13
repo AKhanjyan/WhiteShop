@@ -3,6 +3,8 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Brand = require('../models/Brand');
 const Category = require('../models/Category');
+const Attribute = require('../models/Attribute');
+const { safeRedis } = require('../lib/redis');
 
 const adminController = {
   /**
@@ -176,6 +178,65 @@ const adminController = {
   },
 
   /**
+   * Update user (admin only) - block/unblock user
+   * PUT /api/v1/admin/users/:id
+   */
+  async updateUser(req, res, next) {
+    try {
+      const { id } = req.params;
+      const updateData = req.body;
+
+      console.log('📝 [ADMIN] Updating user:', id);
+      console.log('📝 [ADMIN] Update data:', JSON.stringify(updateData, null, 2));
+
+      const user = await User.findById(id);
+
+      if (!user) {
+        return res.status(404).json({
+          type: 'https://api.shop.am/problems/not-found',
+          title: 'User not found',
+          status: 404,
+          detail: `User with id '${id}' does not exist`,
+          instance: req.path,
+        });
+      }
+
+      // Обновляем пользователя
+      if (updateData.blocked !== undefined) {
+        user.blocked = updateData.blocked;
+      }
+      
+      // Можно добавить обновление других полей
+      if (updateData.roles !== undefined) {
+        user.roles = updateData.roles;
+      }
+
+      await user.save();
+
+      console.log('✅ [ADMIN] User updated successfully:', id);
+      console.log('📊 [ADMIN] Updated user details:', {
+        id: user._id.toString(),
+        blocked: user.blocked,
+        roles: user.roles,
+      });
+
+      res.json({
+        id: user._id.toString(),
+        email: user.email,
+        phone: user.phone,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        roles: user.roles || ['customer'],
+        blocked: user.blocked || false,
+        updatedAt: user.updatedAt,
+      });
+    } catch (error) {
+      console.error('❌ [ADMIN] Error updating user:', error);
+      next(error);
+    }
+  },
+
+  /**
    * Get all orders (admin only)
    * GET /api/v1/admin/orders?page=&limit=&status=
    */
@@ -261,6 +322,25 @@ const adminController = {
             ?.filter((v) => v.published)
             .sort((a, b) => a.price - b.price)[0];
 
+          // Group variants by color and calculate stock per color
+          const colorStockMap = new Map();
+          if (product.variants && product.variants.length > 0) {
+            product.variants.forEach(v => {
+              if (v.published && v.stock > 0) {
+                const colorOption = v.options?.find(opt => opt.attributeKey === 'color');
+                const color = colorOption?.value || 'default';
+                const currentStock = colorStockMap.get(color) || 0;
+                colorStockMap.set(color, currentStock + v.stock);
+              }
+            });
+          }
+
+          // Convert color stock map to array
+          const colorStocks = Array.from(colorStockMap.entries()).map(([color, stock]) => ({
+            color,
+            stock,
+          }));
+
           return {
             id: product._id.toString(),
             slug: translation?.slug || '',
@@ -268,6 +348,7 @@ const adminController = {
             published: product.published || false,
             price: variant?.price || 0,
             stock: variant?.stock || 0,
+            colorStocks: colorStocks, // Add color stocks array
             image: Array.isArray(product.media) && product.media[0]
               ? (typeof product.media[0] === 'string' ? product.media[0] : product.media[0].url)
               : null,
@@ -307,8 +388,10 @@ const adminController = {
         compareAtPrice,
         stock,
         sku,
-        published = false,
+        published = true, // По умолчанию публикуем продукт, чтобы он был виден сразу
         locale = 'en',
+        media = [],
+        variants = [],
       } = req.body;
 
       // Validate required fields
@@ -318,6 +401,18 @@ const adminController = {
           title: 'Validation Error',
           status: 400,
           detail: 'Title and slug are required',
+          instance: req.path,
+        });
+      }
+
+      // Validate price
+      const priceValue = parseFloat(price);
+      if (!price || isNaN(priceValue) || priceValue <= 0) {
+        return res.status(400).json({
+          type: 'https://api.shop.am/problems/validation-error',
+          title: 'Validation Error',
+          status: 400,
+          detail: 'Price is required and must be greater than 0',
           instance: req.path,
         });
       }
@@ -339,11 +434,111 @@ const adminController = {
         });
       }
 
-      // Generate SKU if not provided
-      let productSku = sku;
-      if (!productSku) {
-        const timestamp = Date.now();
-        productSku = `PROD-${timestamp}`;
+      // Process media (images)
+      const processedMedia = Array.isArray(media) 
+        ? media.filter((m) => m && (m.url || typeof m === 'string')).map((m, index) => {
+            if (typeof m === 'string') {
+              return { url: m, position: index, type: 'image' };
+            }
+            return { ...m, position: m.position || index, type: m.type || 'image' };
+          })
+        : [];
+
+      // Get attributes once
+      const [colorAttr, sizeAttr] = await Promise.all([
+        Attribute.findOne({ key: 'color' }),
+        Attribute.findOne({ key: 'size' }),
+      ]);
+
+      // Process variants
+      let processedVariants = [];
+      
+      if (variants && Array.isArray(variants) && variants.length > 0) {
+        // Use provided variants
+        processedVariants = await Promise.all(
+          variants.map(async (variant, index) => {
+            const variantSku = variant.sku || (sku ? `${sku}-${index + 1}` : `PROD-${Date.now()}-${index + 1}`);
+            const options = [];
+            
+            // Process color attribute
+            if (variant.color && colorAttr) {
+              const colorValue = colorAttr.values?.find((v) => v.value === variant.color || v._id.toString() === variant.color);
+              if (colorValue) {
+                options.push({
+                  attributeId: colorAttr._id,
+                  attributeKey: 'color',
+                  valueId: colorValue._id,
+                  value: colorValue.value,
+                });
+              }
+            }
+            
+            // Process size attribute
+            if (variant.size && sizeAttr) {
+              const sizeValue = sizeAttr.values?.find((v) => v.value === variant.size || v._id.toString() === variant.size);
+              if (sizeValue) {
+                options.push({
+                  attributeId: sizeAttr._id,
+                  attributeKey: 'size',
+                  valueId: sizeValue._id,
+                  value: sizeValue.value,
+                });
+              }
+            }
+            
+            return {
+              sku: variantSku,
+              price: parseFloat(variant.price || priceValue || 0),
+              compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : (compareAtPrice ? parseFloat(compareAtPrice) : undefined),
+              stock: parseInt(variant.stock || stock || 0),
+              imageUrl: variant.imageUrl,
+              published: variant.published !== false,
+              options: options,
+              position: variant.position || index,
+            };
+          })
+        );
+      } else {
+        // Create default variant if no variants provided
+        const productSku = sku || `PROD-${Date.now()}`;
+        const defaultOptions = [];
+        
+        // Add color option if provided
+        if (req.body.color && colorAttr) {
+          const colorValue = colorAttr.values?.find((v) => v.value === req.body.color || v._id.toString() === req.body.color);
+          if (colorValue) {
+            defaultOptions.push({
+              attributeId: colorAttr._id,
+              attributeKey: 'color',
+              valueId: colorValue._id,
+              value: colorValue.value,
+            });
+          }
+        }
+        
+        // Add size option if provided
+        if (req.body.size && sizeAttr) {
+          const sizeValue = sizeAttr.values?.find((v) => v.value === req.body.size || v._id.toString() === req.body.size);
+          if (sizeValue) {
+            defaultOptions.push({
+              attributeId: sizeAttr._id,
+              attributeKey: 'size',
+              valueId: sizeValue._id,
+              value: sizeValue.value,
+            });
+          }
+        }
+        
+        processedVariants = [
+          {
+            sku: productSku,
+            price: priceValue,
+            compareAtPrice: compareAtPrice ? parseFloat(compareAtPrice) : undefined,
+            stock: parseInt(stock) || 0,
+            published: true,
+            options: defaultOptions,
+          },
+        ];
       }
 
       // Create product
@@ -357,18 +552,14 @@ const adminController = {
             descriptionHtml: descriptionHtml || '',
           },
         ],
-        variants: [
-          {
-            sku: productSku,
-            price: parseFloat(price) || 0,
-            compareAtPrice: compareAtPrice ? parseFloat(compareAtPrice) : undefined,
-            stock: parseInt(stock) || 0,
-            published: true,
-          },
-        ],
+        variants: processedVariants,
         published: published === true,
         publishedAt: published ? new Date() : null,
       };
+      
+      if (processedMedia.length > 0) {
+        productData.media = processedMedia;
+      }
 
       if (brandId) {
         productData.brandId = brandId;
@@ -381,10 +572,64 @@ const adminController = {
       if (primaryCategoryId) {
         productData.primaryCategoryId = primaryCategoryId;
       }
+      
+      // Get attribute IDs for product (use already fetched attributes)
+      const attributeIds = [];
+      if ((req.body.color || (variants && variants.some((v) => v.color))) && colorAttr) {
+        if (!attributeIds.some((id) => id.toString() === colorAttr._id.toString())) {
+          attributeIds.push(colorAttr._id);
+        }
+      }
+      if ((req.body.size || (variants && variants.some((v) => v.size))) && sizeAttr) {
+        if (!attributeIds.some((id) => id.toString() === sizeAttr._id.toString())) {
+          attributeIds.push(sizeAttr._id);
+        }
+      }
+      if (attributeIds.length > 0) {
+        productData.attributeIds = attributeIds;
+      }
 
       const product = await Product.create(productData);
 
       console.log('✅ [ADMIN] Product created successfully:', product._id.toString());
+      console.log('📊 [ADMIN] Product details:', {
+        id: product._id.toString(),
+        published: product.published,
+        publishedAt: product.publishedAt,
+        variantsCount: product.variants?.length || 0,
+        publishedVariantsCount: product.variants?.filter(v => v.published)?.length || 0,
+        hasTranslations: product.translations?.length > 0,
+        translationsCount: product.translations?.length || 0,
+      });
+
+      // Invalidate products cache to show new products immediately
+      try {
+        // Delete all products list cache keys (pattern matching)
+        const keys = await safeRedis.keys('products:*');
+        if (keys && keys.length > 0) {
+          // Delete keys in batches to avoid issues with too many arguments
+          for (const key of keys) {
+            await safeRedis.del(key);
+          }
+          console.log('🗑️ [ADMIN] Invalidated products cache:', keys.length, 'keys');
+        } else {
+          console.log('ℹ️ [ADMIN] No products cache keys found to invalidate');
+        }
+        
+        // Also invalidate individual product cache if slug exists
+        if (slug) {
+          const productCacheKey = `product:${slug}:*`;
+          const productKeys = await safeRedis.keys(productCacheKey);
+          if (productKeys && productKeys.length > 0) {
+            for (const key of productKeys) {
+              await safeRedis.del(key);
+            }
+            console.log('🗑️ [ADMIN] Invalidated product cache:', productKeys.length, 'keys');
+          }
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ [ADMIN] Cache invalidation error (non-critical):', cacheError.message);
+      }
 
       const translation = product.translations?.[0];
       const variant = product.variants?.[0];
@@ -403,6 +648,158 @@ const adminController = {
       });
     } catch (error) {
       console.error('❌ [ADMIN] Error creating product:', error);
+      next(error);
+    }
+  },
+
+  /**
+   * Update product (admin only)
+   * PUT /api/v1/admin/products/:id
+   */
+  async updateProduct(req, res, next) {
+    try {
+      const { id } = req.params;
+      const updateData = req.body;
+
+      console.log('📝 [ADMIN] Updating product:', id);
+      console.log('📝 [ADMIN] Update data:', JSON.stringify(updateData, null, 2));
+
+      const product = await Product.findById(id);
+
+      if (!product) {
+        return res.status(404).json({
+          type: 'https://api.shop.am/problems/not-found',
+          title: 'Product not found',
+          status: 404,
+          detail: `Product with id '${id}' does not exist`,
+          instance: req.path,
+        });
+      }
+
+      // Если обновляется статус published, обновляем publishedAt
+      if (updateData.published !== undefined) {
+        updateData.publishedAt = updateData.published ? new Date() : null;
+      }
+
+      // Обновляем продукт
+      Object.assign(product, updateData);
+      await product.save();
+
+      console.log('✅ [ADMIN] Product updated successfully:', id);
+      console.log('📊 [ADMIN] Updated product details:', {
+        id: product._id.toString(),
+        published: product.published,
+        publishedAt: product.publishedAt,
+      });
+
+      // Invalidate products cache
+      try {
+        const keys = await safeRedis.keys('products:*');
+        if (keys && keys.length > 0) {
+          for (const key of keys) {
+            await safeRedis.del(key);
+          }
+          console.log('🗑️ [ADMIN] Invalidated products cache:', keys.length, 'keys');
+        }
+
+        // Invalidate individual product cache
+        if (product.translations && product.translations.length > 0) {
+          for (const translation of product.translations) {
+            const productCacheKey = `product:${translation.slug}:*`;
+            const productKeys = await safeRedis.keys(productCacheKey);
+            if (productKeys && productKeys.length > 0) {
+              for (const key of productKeys) {
+                await safeRedis.del(key);
+              }
+            }
+          }
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ [ADMIN] Cache invalidation error (non-critical):', cacheError.message);
+      }
+
+      const translation = product.translations?.[0];
+      const variant = product.variants?.[0];
+
+      res.json({
+        id: product._id.toString(),
+        slug: translation?.slug || '',
+        title: translation?.title || '',
+        subtitle: translation?.subtitle,
+        description: translation?.descriptionHtml,
+        price: variant?.price || 0,
+        stock: variant?.stock || 0,
+        sku: variant?.sku || '',
+        published: product.published,
+        publishedAt: product.publishedAt,
+        updatedAt: product.updatedAt,
+      });
+    } catch (error) {
+      console.error('❌ [ADMIN] Error updating product:', error);
+      next(error);
+    }
+  },
+
+  /**
+   * Delete product (admin only) - soft delete
+   * DELETE /api/v1/admin/products/:id
+   */
+  async deleteProduct(req, res, next) {
+    try {
+      const { id } = req.params;
+
+      console.log('🗑️ [ADMIN] Deleting product:', id);
+
+      const product = await Product.findById(id);
+
+      if (!product) {
+        return res.status(404).json({
+          type: 'https://api.shop.am/problems/not-found',
+          title: 'Product not found',
+          status: 404,
+          detail: `Product with id '${id}' does not exist`,
+          instance: req.path,
+        });
+      }
+
+      // Soft delete - set deletedAt timestamp
+      product.deletedAt = new Date();
+      await product.save();
+
+      console.log('✅ [ADMIN] Product deleted successfully:', id);
+
+      // Invalidate products cache
+      try {
+        const keys = await safeRedis.keys('products:*');
+        if (keys && keys.length > 0) {
+          for (const key of keys) {
+            await safeRedis.del(key);
+          }
+          console.log('🗑️ [ADMIN] Invalidated products cache:', keys.length, 'keys');
+        }
+
+        // Invalidate individual product cache
+        if (product.translations && product.translations.length > 0) {
+          for (const translation of product.translations) {
+            const productCacheKey = `product:${translation.slug}:*`;
+            const productKeys = await safeRedis.keys(productCacheKey);
+            if (productKeys && productKeys.length > 0) {
+              for (const key of productKeys) {
+                await safeRedis.del(key);
+              }
+            }
+          }
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ [ADMIN] Cache invalidation error (non-critical):', cacheError.message);
+      }
+
+      res.json({
+        message: 'Product deleted successfully',
+        id: product._id.toString(),
+      });
+    } catch (error) {
+      console.error('❌ [ADMIN] Error deleting product:', error);
       next(error);
     }
   },
@@ -457,6 +854,46 @@ const adminController = {
         }),
       });
     } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get all attributes (admin only)
+   * GET /api/v1/admin/attributes?lang=
+   */
+  async getAttributes(req, res, next) {
+    try {
+      console.log('🔧 [ADMIN] Fetching attributes...');
+      const { lang = 'en' } = req.query;
+      const attributes = await Attribute.find()
+        .sort({ position: 1 })
+        .lean();
+
+      const result = {
+        data: attributes.map((attribute) => {
+          const translation = attribute.translations?.find((t) => t.locale === lang) || attribute.translations?.[0];
+          return {
+            id: attribute._id.toString(),
+            key: attribute.key,
+            name: translation?.name || attribute.key,
+            type: attribute.type,
+            values: (attribute.values || []).map((val) => {
+              const valTranslation = val.translations?.find((t) => t.locale === lang) || val.translations?.[0];
+              return {
+                id: val._id?.toString() || val.value,
+                value: val.value,
+                label: valTranslation?.label || val.value,
+              };
+            }),
+          };
+        }),
+      };
+
+      console.log(`✅ [ADMIN] Found ${result.data.length} attributes`);
+      res.json(result);
+    } catch (error) {
+      console.error('❌ [ADMIN] Error fetching attributes:', error);
       next(error);
     }
   },

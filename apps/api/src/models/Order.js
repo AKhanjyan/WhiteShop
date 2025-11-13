@@ -146,8 +146,8 @@ const orderSchema = new mongoose.Schema({
 });
 
 // Indexes
+// number уже имеет unique: true в схеме, что автоматически создает индекс
 orderSchema.index({ userId: 1 });
-orderSchema.index({ number: 1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ customerEmail: 1 });
 orderSchema.index({ createdAt: -1 });

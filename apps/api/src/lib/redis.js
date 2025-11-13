@@ -119,6 +119,15 @@ const safeRedis = {
       // Silently fail
     }
   },
+
+  async keys(pattern) {
+    if (!redisAvailable) return [];
+    try {
+      return await redis.keys(pattern);
+    } catch (error) {
+      return [];
+    }
+  },
 };
 
 module.exports = { redis, safeRedis };

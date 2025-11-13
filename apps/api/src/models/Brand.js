@@ -30,7 +30,7 @@ const brandSchema = new mongoose.Schema({
 });
 
 // Indexes
-brandSchema.index({ slug: 1 });
+// slug уже имеет unique: true в схеме, что автоматически создает индекс
 brandSchema.index({ published: 1 });
 brandSchema.index({ deletedAt: 1 });
 

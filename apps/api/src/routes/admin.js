@@ -12,6 +12,7 @@ router.get('/stats', adminController.getStats);
 
 // Users management
 router.get('/users', adminController.getUsers);
+router.put('/users/:id', adminController.updateUser);
 
 // Orders management
 router.get('/orders', adminController.getOrders);
@@ -19,10 +20,13 @@ router.get('/orders', adminController.getOrders);
 // Products management
 router.get('/products', adminController.getProducts);
 router.post('/products', adminController.createProduct);
+router.put('/products/:id', adminController.updateProduct);
+router.delete('/products/:id', adminController.deleteProduct);
 
 // Brands and categories for dropdowns
 router.get('/brands', adminController.getBrands);
 router.get('/categories', adminController.getCategories);
+router.get('/attributes', adminController.getAttributes);
 
 // Recent activity
 router.get('/activity', adminController.getActivity);

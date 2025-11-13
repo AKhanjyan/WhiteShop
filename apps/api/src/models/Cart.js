@@ -55,8 +55,8 @@ const cartSchema = new mongoose.Schema({
 });
 
 // Indexes
+// guestToken уже имеет unique: true в схеме, что автоматически создает индекс
 cartSchema.index({ userId: 1 });
-cartSchema.index({ guestToken: 1 });
 cartSchema.index({ abandoned: 1, abandonedAt: 1 });
 cartSchema.index({ expiresAt: 1 });
 
