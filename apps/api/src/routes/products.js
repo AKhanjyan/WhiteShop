@@ -1,0 +1,12 @@
+const express = require('express');
+const router = express.Router();
+const productsController = require('../controllers/productsController');
+
+// GET /api/v1/products - List products
+router.get('/', productsController.findAll);
+
+// GET /api/v1/products/:slug - Get product by slug
+router.get('/:slug', productsController.findBySlug);
+
+module.exports = router;
+

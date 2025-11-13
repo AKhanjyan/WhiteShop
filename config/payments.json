@@ -1,0 +1,43 @@
+{
+  "defaultProvider": "idram",
+  "providers": [
+    {
+      "id": "idram",
+      "name": "Idram",
+      "enabled": true,
+      "methods": ["wallet", "card"],
+      "currencies": ["AMD", "USD"],
+      "logo": "/assets/payments/idram.svg",
+      "testMode": false,
+      "webhookUrl": "/api/v1/payments/webhook/idram",
+      "config": {
+        "merchantId": "${IDRAM_MERCHANT_ID}",
+        "secretKey": "${IDRAM_SECRET_KEY}",
+        "publicKey": "${IDRAM_PUBLIC_KEY}",
+        "apiUrl": "https://banking.idram.am/api/v1"
+      }
+    },
+    {
+      "id": "arca",
+      "name": "ArCa",
+      "enabled": true,
+      "methods": ["card"],
+      "currencies": ["AMD"],
+      "logo": "/assets/payments/arca.svg",
+      "supports3DS": true,
+      "testMode": false,
+      "webhookUrl": "/api/v1/payments/webhook/arca",
+      "config": {
+        "merchantId": "${ARCA_MERCHANT_ID}",
+        "apiKey": "${ARCA_API_KEY}",
+        "apiUrl": "https://ipay.arca.am/payment/rest"
+      }
+    }
+  ],
+  "retryPolicy": {
+    "maxAttempts": 3,
+    "backoffMs": 1000
+  },
+  "webhookSignatureAlgo": "hmac-sha256"
+}
+

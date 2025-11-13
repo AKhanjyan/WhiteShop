@@ -1,0 +1,76 @@
+{
+  "defaultMethod": "courier_yerevan",
+  "methods": [
+    {
+      "id": "pickup",
+      "name": {
+        "en": "Pickup",
+        "ru": "Самовывоз",
+        "am": "Ինքնուրույն"
+      },
+      "enabled": true,
+      "price": 0,
+      "estimatedDays": 0,
+      "icon": "store",
+      "locations": [
+        {
+          "name": {
+            "en": "Main Office",
+            "ru": "Главный офис",
+            "am": "Գլխավոր գրասենյակ"
+          },
+          "address": "Yerevan, Abovyan 10",
+          "coords": {
+            "lat": 40.1776,
+            "lng": 44.5126
+          },
+          "workingHours": {
+            "en": "Mon-Fri 10:00-19:00",
+            "ru": "Пн-Пт 10:00-19:00",
+            "am": "Երկ-Ուրբ 10:00-19:00"
+          }
+        }
+      ]
+    },
+    {
+      "id": "courier_yerevan",
+      "name": {
+        "en": "Courier in Yerevan",
+        "ru": "Курьер по Еревану",
+        "am": "Առաքիչ Երևանում"
+      },
+      "enabled": true,
+      "price": 1000,
+      "freeAbove": 50000,
+      "estimatedDays": 1,
+      "icon": "truck",
+      "zones": [
+        {
+          "name": "Yerevan Center",
+          "postalCodes": ["0001", "0002", "0009"],
+          "price": 1000
+        },
+        {
+          "name": "Yerevan Outskirts",
+          "postalCodes": ["0070", "0080"],
+          "price": 1500
+        }
+      ]
+    },
+    {
+      "id": "armenia_regions",
+      "name": {
+        "en": "Armenia regions",
+        "ru": "Доставка по Армении",
+        "am": "Առաքում Հայաստանում"
+      },
+      "enabled": true,
+      "price": 3000,
+      "freeAbove": null,
+      "estimatedDays": 3,
+      "icon": "map",
+      "excludedRegions": []
+    }
+  ]
+}
+

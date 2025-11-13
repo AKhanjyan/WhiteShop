@@ -1,0 +1,17 @@
+{
+  "name": "@shop/ui",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./Button": "./Button.tsx",
+    "./Card": "./Card.tsx",
+    "./Input": "./Input.tsx"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
