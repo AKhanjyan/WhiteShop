@@ -33,7 +33,7 @@ const cartController = {
             _id: item.productId,
             'variants._id': item.variantId,
           })
-            .select('translations variants')
+            .select('translations variants media')
             .lean();
 
           const variant = product?.variants?.find(
@@ -42,6 +42,19 @@ const cartController = {
           const translation = product?.translations?.find(
             (t) => t.locale === (req.user.locale || 'en')
           ) || product?.translations?.[0];
+
+          // Extract first image from media
+          let imageUrl = null;
+          if (product?.media && product.media.length > 0) {
+            const firstMedia = product.media[0];
+            if (typeof firstMedia === 'string') {
+              imageUrl = firstMedia;
+            } else if (firstMedia?.url) {
+              imageUrl = firstMedia.url;
+            } else if (firstMedia?.src) {
+              imageUrl = firstMedia.src;
+            }
+          }
 
           return {
             id: item._id.toString(),
@@ -52,6 +65,7 @@ const cartController = {
                 id: product?._id?.toString() || '',
                 title: translation?.title || '',
                 slug: translation?.slug || '',
+                image: imageUrl,
               },
             },
             quantity: item.quantity,
@@ -279,7 +293,18 @@ const cartController = {
         });
       }
 
-      cart.items.id(id).remove();
+      // Use pull() method which is more reliable for removing subdocuments
+      const item = cart.items.id(id);
+      if (!item) {
+        return res.status(404).json({
+          type: 'https://api.shop.am/problems/not-found',
+          title: 'Cart item not found',
+          status: 404,
+          instance: req.path,
+        });
+      }
+
+      cart.items.pull(id);
       await cart.save();
 
       res.status(204).send();

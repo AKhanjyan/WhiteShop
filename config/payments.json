@@ -32,6 +32,38 @@
         "apiKey": "${ARCA_API_KEY}",
         "apiUrl": "https://ipay.arca.am/payment/rest"
       }
+    },
+    {
+      "id": "armenian_express",
+      "name": "Armenian Express",
+      "enabled": true,
+      "methods": ["card"],
+      "currencies": ["AMD"],
+      "logo": "/assets/payments/armenian-express.svg",
+      "supports3DS": true,
+      "testMode": false,
+      "webhookUrl": "/api/v1/payments/webhook/armenian-express",
+      "config": {
+        "merchantId": "${ARMENIAN_EXPRESS_MERCHANT_ID}",
+        "apiKey": "${ARMENIAN_EXPRESS_API_KEY}",
+        "apiUrl": "https://api.armenianexpress.am"
+      }
+    },
+    {
+      "id": "ameria",
+      "name": "Ameria",
+      "enabled": true,
+      "methods": ["card"],
+      "currencies": ["AMD"],
+      "logo": "/assets/payments/ameria.svg",
+      "supports3DS": true,
+      "testMode": false,
+      "webhookUrl": "/api/v1/payments/webhook/ameria",
+      "config": {
+        "merchantId": "${AMERIA_MERCHANT_ID}",
+        "apiKey": "${AMERIA_API_KEY}",
+        "apiUrl": "https://api.ameria.am"
+      }
     }
   ],
   "retryPolicy": {
