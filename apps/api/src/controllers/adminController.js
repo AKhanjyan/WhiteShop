@@ -405,16 +405,39 @@ const adminController = {
         });
       }
 
-      // Validate price
-      const priceValue = parseFloat(price);
-      if (!price || isNaN(priceValue) || priceValue <= 0) {
-        return res.status(400).json({
-          type: 'https://api.shop.am/problems/validation-error',
-          title: 'Validation Error',
-          status: 400,
-          detail: 'Price is required and must be greater than 0',
-          instance: req.path,
-        });
+      // Validate price - only required if no variants are provided
+      const hasVariants = variants && Array.isArray(variants) && variants.length > 0;
+      let priceValue = 0;
+      
+      if (!hasVariants) {
+        // If no variants, require top-level price
+        priceValue = parseFloat(price);
+        if (!price || isNaN(priceValue) || priceValue <= 0) {
+          return res.status(400).json({
+            type: 'https://api.shop.am/problems/validation-error',
+            title: 'Validation Error',
+            status: 400,
+            detail: 'Price is required and must be greater than 0',
+            instance: req.path,
+          });
+        }
+      } else {
+        // If variants are provided, validate each variant has a valid price
+        for (let i = 0; i < variants.length; i++) {
+          const variant = variants[i];
+          const variantPrice = parseFloat(variant.price);
+          if (!variant.price || isNaN(variantPrice) || variantPrice <= 0) {
+            return res.status(400).json({
+              type: 'https://api.shop.am/problems/validation-error',
+              title: 'Validation Error',
+              status: 400,
+              detail: `Variant ${i + 1}: Price is required and must be greater than 0`,
+              instance: req.path,
+            });
+          }
+        }
+        // Get priceValue for fallback (use first variant price or provided price)
+        priceValue = price ? parseFloat(price) : (variants[0] ? parseFloat(variants[0].price) : 0);
       }
 
       // Check if product with same slug already exists
