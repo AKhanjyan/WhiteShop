@@ -368,6 +368,82 @@ const adminController = {
   },
 
   /**
+   * Get single product by ID (admin only)
+   * GET /api/v1/admin/products/:id
+   */
+  async getProduct(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { lang = 'en' } = req.query;
+
+      console.log('📥 [ADMIN] Fetching product:', id);
+
+      const product = await Product.findById(id)
+        .populate('brandId')
+        .populate('categoryIds')
+        .populate('primaryCategoryId')
+        .lean();
+
+      if (!product) {
+        return res.status(404).json({
+          type: 'https://api.shop.am/problems/not-found',
+          title: 'Product not found',
+          status: 404,
+          detail: `Product with id '${id}' does not exist`,
+          instance: req.path,
+        });
+      }
+
+      const translation = product.translations?.find((t) => t.locale === lang) || product.translations?.[0];
+      const brandTranslation = product.brandId?.translations?.find((t) => t.locale === lang) || product.brandId?.translations?.[0];
+
+      // Get category translations
+      const categoryTranslations = await Category.find({
+        _id: { $in: product.categoryIds || [] },
+      }).lean();
+
+      const response = {
+        id: product._id.toString(),
+        slug: translation?.slug || '',
+        title: translation?.title || '',
+        subtitle: translation?.subtitle || '',
+        descriptionHtml: translation?.descriptionHtml || '',
+        brandId: product.brandId?._id?.toString() || null,
+        primaryCategoryId: product.primaryCategoryId?._id?.toString() || product.primaryCategoryId?.toString() || null,
+        categoryIds: (product.categoryIds || []).map((cat) => 
+          cat._id?.toString() || cat.toString()
+        ),
+        published: product.published || false,
+        media: Array.isArray(product.media) ? product.media.map((m) => 
+          typeof m === 'string' ? m : m.url
+        ) : [],
+        variants: (product.variants || []).map((variant) => {
+          const colorOption = variant.options?.find((opt) => opt.attributeKey === 'color');
+          const sizeOption = variant.options?.find((opt) => opt.attributeKey === 'size');
+          
+          return {
+            id: variant._id?.toString() || '',
+            price: variant.price?.toString() || '0',
+            compareAtPrice: variant.compareAtPrice?.toString() || '',
+            stock: variant.stock?.toString() || '0',
+            sku: variant.sku || '',
+            color: colorOption?.value || '',
+            size: sizeOption?.value || '',
+            imageUrl: variant.imageUrl || '',
+            published: variant.published !== false,
+          };
+        }),
+      };
+
+      console.log('✅ [ADMIN] Product fetched successfully:', id);
+      res.json(response);
+    } catch (error) {
+      console.error('❌ [ADMIN] Error fetching product:', error);
+      next(error);
+    }
+  },
+
+  /**
    * Create new product (admin only)
    * POST /api/v1/admin/products
    */
@@ -682,10 +758,22 @@ const adminController = {
   async updateProduct(req, res, next) {
     try {
       const { id } = req.params;
-      const updateData = req.body;
+      const {
+        title,
+        slug,
+        subtitle,
+        descriptionHtml,
+        brandId,
+        categoryIds,
+        primaryCategoryId,
+        published,
+        locale = 'en',
+        media = [],
+        variants = [],
+      } = req.body;
 
       console.log('📝 [ADMIN] Updating product:', id);
-      console.log('📝 [ADMIN] Update data:', JSON.stringify(updateData, null, 2));
+      console.log('📝 [ADMIN] Update data:', JSON.stringify(req.body, null, 2));
 
       const product = await Product.findById(id);
 
@@ -699,13 +787,133 @@ const adminController = {
         });
       }
 
-      // Если обновляется статус published, обновляем publishedAt
-      if (updateData.published !== undefined) {
-        updateData.publishedAt = updateData.published ? new Date() : null;
+      // Update translations
+      if (title || slug || subtitle !== undefined || descriptionHtml !== undefined) {
+        const translationIndex = product.translations?.findIndex((t) => t.locale === locale) ?? -1;
+        const translation = translationIndex >= 0 
+          ? product.translations[translationIndex]
+          : { locale, title: '', slug: '', subtitle: '', descriptionHtml: '' };
+
+        if (title !== undefined) translation.title = title;
+        if (slug !== undefined) translation.slug = slug;
+        if (subtitle !== undefined) translation.subtitle = subtitle || '';
+        if (descriptionHtml !== undefined) translation.descriptionHtml = descriptionHtml || '';
+
+        if (translationIndex >= 0) {
+          product.translations[translationIndex] = translation;
+        } else {
+          if (!product.translations) product.translations = [];
+          product.translations.push(translation);
+        }
       }
 
-      // Обновляем продукт
-      Object.assign(product, updateData);
+      // Process media
+      if (Array.isArray(media)) {
+        const processedMedia = media
+          .filter((m) => m && (m.url || typeof m === 'string'))
+          .map((m, index) => {
+            if (typeof m === 'string') {
+              return { url: m, position: index, type: 'image' };
+            }
+            return { ...m, position: m.position || index, type: m.type || 'image' };
+          });
+        product.media = processedMedia;
+      }
+
+      // Process variants if provided
+      if (variants && Array.isArray(variants) && variants.length > 0) {
+        // First, remove old variants to avoid SKU conflicts
+        // We need to delete them from the database first to free up the SKU unique constraint
+        if (product.variants && product.variants.length > 0) {
+          // Remove variants by setting the array to empty
+          // MongoDB will handle the deletion when we save
+          product.variants = [];
+          // Save to remove old variants from database
+          await product.save();
+        }
+
+        const [colorAttr, sizeAttr] = await Promise.all([
+          Attribute.findOne({ key: 'color' }),
+          Attribute.findOne({ key: 'size' }),
+        ]);
+
+        // Helper function to check if SKU is unique
+        const isSkuUnique = async (sku, excludeProductId) => {
+          if (!sku) return false;
+          const existing = await Product.findOne({
+            _id: { $ne: excludeProductId },
+            'variants.sku': sku,
+            deletedAt: null,
+          });
+          return !existing;
+        };
+
+        const processedVariants = await Promise.all(
+          variants.map(async (variant, index) => {
+            // Generate unique SKU if not provided or if provided SKU is not unique
+            let variantSku = variant.sku;
+            if (!variantSku) {
+              variantSku = `${product.skuPrefix || 'PROD'}-${Date.now()}-${index + 1}`;
+            } else {
+              // Check if SKU is unique (excluding current product)
+              const isUnique = await isSkuUnique(variantSku, product._id);
+              if (!isUnique) {
+                // Add suffix to make it unique
+                variantSku = `${variantSku}-${Date.now()}-${index + 1}`;
+              }
+            }
+            const options = [];
+            
+            // Process color attribute
+            if (variant.color && colorAttr) {
+              const colorValue = colorAttr.values?.find((v) => v.value === variant.color || v._id.toString() === variant.color);
+              if (colorValue) {
+                options.push({
+                  attributeId: colorAttr._id,
+                  attributeKey: 'color',
+                  valueId: colorValue._id,
+                  value: colorValue.value,
+                });
+              }
+            }
+            
+            // Process size attribute
+            if (variant.size && sizeAttr) {
+              const sizeValue = sizeAttr.values?.find((v) => v.value === variant.size || v._id.toString() === variant.size);
+              if (sizeValue) {
+                options.push({
+                  attributeId: sizeAttr._id,
+                  attributeKey: 'size',
+                  valueId: sizeValue._id,
+                  value: sizeValue.value,
+                });
+              }
+            }
+            
+            return {
+              sku: variantSku,
+              price: parseFloat(variant.price || 0),
+              compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : undefined,
+              stock: parseInt(variant.stock || 0),
+              imageUrl: variant.imageUrl,
+              published: variant.published !== false,
+              options: options,
+              position: variant.position || index,
+            };
+          })
+        );
+        product.variants = processedVariants;
+      }
+
+      // Update other fields
+      if (brandId !== undefined) product.brandId = brandId || null;
+      if (categoryIds !== undefined) product.categoryIds = Array.isArray(categoryIds) ? categoryIds : [];
+      if (primaryCategoryId !== undefined) product.primaryCategoryId = primaryCategoryId || null;
+      if (published !== undefined) {
+        product.published = published;
+        product.publishedAt = published ? new Date() : null;
+      }
+
       await product.save();
 
       console.log('✅ [ADMIN] Product updated successfully:', id);
